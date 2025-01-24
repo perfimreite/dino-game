@@ -2,23 +2,27 @@ import pygame as pg
 import math
 import time
 import sys
+import json
 from random import randint
 
-WINDOW_WIDTH = 1920
+
+WINDOW_WIDTH = 1600
 WINDOW_HEIGHT = 1080
 GROUND_LEVEL = WINDOW_HEIGHT / 2
 FPS = 60
 
+
 class Game:
     def __init__(self):
         self.score = 0
-        self.lower_obstruction_spawn_time = 1000
+        self.highscore = 0
+        self.velocity = 0
         self.acceleration = -10
-        self.upper_obstruction_spawn_time = None
-        self.velocity = None
+        self.lower_obstruction_spawn_time = 1000
+        self.upper_obstruction_spawn_time = 0
 
     def choose_difficulty(self):
-        difficulty = input("choose difficulty (easy/medium/hard): ").strip().lower()
+        difficulty = input("Choose difficulty (easy/medium/hard): ").strip().lower()
         match difficulty:
             case "easy":
                 self.velocity = -250
@@ -32,19 +36,39 @@ class Game:
             case _:
                 sys.exit(f"ERROR: `{difficulty}` is not an option")
 
+    def get_highscore(self):
+        with open("highscore.json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+            self.highscore = data["highscore"]
+
+    def update_highscore(self, score):
+        new_highscore = { "highscore": score }
+        with open("highscore.json", "w", encoding="utf-8") as f:
+            json.dump(new_highscore, f, indent=4)
+
+    def update_score(self, dino, obstructions):
+        for o in obstructions:
+            if o.pos.x + o.width < dino.pos.x - dino.radius and not o.passed_dino:
+                self.score += 1
+                o.passed_dino = True
+
+
 class Dino:
     def __init__(self):
-        self.color = "black"
         self.radius = 50
         self.pos = pg.Vector2(WINDOW_WIDTH / 4, GROUND_LEVEL - self.radius)
         self.jumping = False
         self.peak_jump_time = 0.5
         self.jump_height = 300
 
-    def jump(self, time):
+    def jump(self, elapsed_time):
         a = self.jump_height / (self.peak_jump_time ** 2)
-        y = (GROUND_LEVEL - self.radius) - (-a * (time - self.peak_jump_time) ** 2 + self.jump_height)
+        y = (GROUND_LEVEL - self.radius) - (-a * (elapsed_time - self.peak_jump_time) ** 2 + self.jump_height)
         self.pos.y = min(y, GROUND_LEVEL - self.radius)
+
+        if self.pos.y >= GROUND_LEVEL - self.radius and elapsed_time > self.peak_jump_time * 2:
+            self.pos.y = GROUND_LEVEL - self.radius
+            self.jumping = False
 
     def collision(self, obstruction):
         x = math.floor(self.pos.x)
@@ -55,19 +79,20 @@ class Dino:
         
         return distance <= self.radius
 
+
 class Obstruction:
     def __init__(self):
-        self.passed_dino = False
-        self.color = "green"
         self.height = 120
         self.width = 60
         self.pos = pg.Vector2(WINDOW_WIDTH, GROUND_LEVEL - self.height)
+        self.passed_dino = False
 
     def move(self, vel, dt):
         self.pos.x += vel * dt
 
     def oob(self):
         return self.pos.x < -self.width 
+
 
 def remove_oob(obstructions):
     for i in range(len(obstructions) - 1):
@@ -76,17 +101,19 @@ def remove_oob(obstructions):
             i -= 1
     return obstructions
 
-def main():
+
+if __name__ == "__main__":
     print("------- DINO GAME -------")
     game = Game()
     game.choose_difficulty()
+    game.get_highscore()
     dino = Dino()
     obstructions = []
 
     pg.init()
-    pg.display.set_caption("dino game")
+    pg.display.set_caption("Dino-game")
     window = pg.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
-    font = pg.font.Font("/home/perfimreite/.local/share/fonts/Iosevka/IosevkaNerdFontPropo-Regular.ttf", 64)
+    font = pg.font.Font('freesansbold.ttf', 64)
 
     CREATE_OBSTRUCTION = pg.USEREVENT + 1
     pg.time.set_timer(CREATE_OBSTRUCTION, 1000)
@@ -94,15 +121,13 @@ def main():
     DELAY_UPPER_OBSTRUCTION_SPAWN_TIME = pg.USEREVENT + 2
     pg.time.set_timer(DELAY_UPPER_OBSTRUCTION_SPAWN_TIME, 1000)
 
-    clock = pg.time.Clock()
     dt = 0
     start_time = time.time()
      
-    running = True
-    while running:
+    while True:
         for event in pg.event.get():
             if event.type == pg.QUIT:
-                running = False
+                sys.exit("You exited the window")
             elif event.type == CREATE_OBSTRUCTION:
                 pg.time.set_timer(CREATE_OBSTRUCTION, randint(game.lower_obstruction_spawn_time, game.upper_obstruction_spawn_time))
                 obstructions.append(Obstruction())
@@ -117,47 +142,39 @@ def main():
         
         window.fill("aqua")
         pg.draw.rect(window, "bisque", (0, WINDOW_HEIGHT / 2, WINDOW_WIDTH, WINDOW_HEIGHT / 2))
+        pg.draw.circle(window, "black", (dino.pos.x, dino.pos.y), dino.radius)
 
         if dino.jumping:
-            elapsed_time = time.time() - jump_start_time
-            dino.jump(elapsed_time)
-            if dino.pos.y >= GROUND_LEVEL - dino.radius and elapsed_time > dino.peak_jump_time * 2:
-                dino.jumping = False
-                dino.pos.y = GROUND_LEVEL - dino.radius
+            jump_elapsed_time = time.time() - jump_start_time
+            dino.jump(jump_elapsed_time)
        
         obstructions = remove_oob(obstructions)
-
-        for o in obstructions:
-            if o.pos.x < dino.pos.x - dino.radius and not o.passed_dino:
-                game.score += 1
-                o.passed_dino = True
+        game.update_score(dino, obstructions)
 
         for o in obstructions:
             if dino.collision(o):
-                sys.exit(f"loser, you only got {game.score} points...")
-                # TODO: fix how the game ends
+                if game.score > game.highscore:
+                    game.update_highscore(game.score)
+                    sys.exit(f"New highscore! Congratulation, you got {game.score} points")
+                sys.exit(f"You got {game.score} points.")
 
-            pg.draw.rect(window, o.color, (o.pos.x, o.pos.y, o.width, o.height))
+            pg.draw.rect(window, "green", (o.pos.x, o.pos.y, o.width, o.height))
             o.move(game.velocity, dt)
        
         game.velocity += game.acceleration * dt
-
-        pg.draw.circle(window, dino.color, (dino.pos.x, dino.pos.y), dino.radius)
        
-        score = font.render(f"{game.score}", True, "white", "aqua")
-        score_rect = score.get_rect()
-        score_rect.center = (WINDOW_WIDTH / 2, WINDOW_HEIGHT / 5)
-        window.blit(score, score_rect)
+        score_widget = font.render(f"{game.score} | {game.highscore}", True, "white", "aqua")
+        score_rect = score_widget.get_rect()
+        score_rect.center = (WINDOW_WIDTH / 2, 100)
+        window.blit(score_widget, score_rect)
         
         elapsed_time = time.time() - start_time
-        time_since_start = font.render(f"{round(elapsed_time, 2)}", True, "white", "aqua")
-        time_rect = time_since_start.get_rect()
-        time_rect.center = (WINDOW_WIDTH - 100, 100)
-        window.blit(time_since_start, time_rect)
+        elapsed_time_widget = font.render(f"{round(elapsed_time, 1)}", True, "white", "aqua")
+        elapsed_time_rect = elapsed_time_widget.get_rect()
+        elapsed_time_rect.center = (WINDOW_WIDTH - 100, 100)
+        window.blit(elapsed_time_widget, elapsed_time_rect)
         
+        dt = pg.time.Clock().tick(FPS) / 1000
         pg.display.flip()
-        dt = clock.tick(FPS) / 1000
 
-if __name__ == "__main__":
-    main()
     pg.quit()
